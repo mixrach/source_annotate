@@ -82,6 +82,9 @@ public class ThreadLocal<T> {
      * are used by the same threads, while remaining well-behaved in
      * less common cases.
      */
+    //专门为thread local map提供的hashCode，用来避免重复创建TheadLocal对象而造成的hash冲突
+    //其实可以发现，Thread local类型中除了初始化值的supplier不同之外，其他没有特殊化的属性值
+    //不容易根据属性生成不同的hash值，这里的nextHashCode 方法则是为了解决这个问题。
     private final int threadLocalHashCode = nextHashCode();
 
     /**
@@ -379,12 +382,15 @@ public class ThreadLocal<T> {
          */
         ThreadLocalMap(ThreadLocal<?> firstKey, Object firstValue) {
             table = new Entry[INITIAL_CAPACITY];
+            //获取当前的hash值，并与低capacity的低位进行位与，比如capacity为16， 则**1111 与当前hashCode进行位与
             int i = firstKey.threadLocalHashCode & (INITIAL_CAPACITY - 1);
+            //写入值
             table[i] = new Entry(firstKey, firstValue);
             size = 1;
             setThreshold(INITIAL_CAPACITY);
         }
 
+        //从父线程继承来map
         /**
          * Construct a new map including all Inheritable ThreadLocals
          * from given parent map. Called only by createInheritedMap.
@@ -426,11 +432,14 @@ public class ThreadLocal<T> {
          * @return the entry associated with key, or null if no such
          */
         private Entry getEntry(ThreadLocal<?> key) {
+            //取hash值
             int i = key.threadLocalHashCode & (table.length - 1);
+            //获取entry
             Entry e = table[i];
             if (e != null && e.get() == key)
                 return e;
             else
+                //在entry中为找到
                 return getEntryAfterMiss(key, i, e);
         }
 
@@ -444,19 +453,26 @@ public class ThreadLocal<T> {
          * @return the entry associated with key, or null if no such
          */
         private Entry getEntryAfterMiss(ThreadLocal<?> key, int i, Entry e) {
+            //将引用copy到栈上，不需要每次访问heap上的对象（this）进行访问
             Entry[] tab = table;
             int len = tab.length;
 
+            //如果e为null，直接返回null，此map使用开放寻址的方法处理hash冲突，此处循环检查，看是否能找到
+            //看此处开始有个疑惑，就是如果全部的entry都不会null，且key与参数key不同，则会进入死循环。但是
+            //考虑到，此map有threshold，因此整个map的槽不会满，所以不用担心发生死循环
             while (e != null) {
                 ThreadLocal<?> k = e.get();
+                //找到key
                 if (k == key)
                     return e;
+                //存在key为null的entry，执行清理
                 if (k == null)
                     expungeStaleEntry(i);
                 else
                     i = nextIndex(i, len);
                 e = tab[i];
             }
+
             return null;
         }
 
@@ -477,24 +493,27 @@ public class ThreadLocal<T> {
             int len = tab.length;
             int i = key.threadLocalHashCode & (len-1);
 
+            //开放寻址解决冲突
             for (Entry e = tab[i];
                  e != null;
                  e = tab[i = nextIndex(i, len)]) {
                 ThreadLocal<?> k = e.get();
-
+                //如果key恰好相等，则更新值
                 if (k == key) {
                     e.value = value;
                     return;
                 }
-
+                //如果k为null，说明是陈旧的entry，可以直接替换
                 if (k == null) {
                     replaceStaleEntry(key, value, i);
                     return;
                 }
             }
-
+            //找到何时的空槽，写入值
             tab[i] = new Entry(key, value);
+            //更新当前大小
             int sz = ++size;
+            //如果有新清理掉的槽，则不需要再进行thresh hold的判断，反之则需要
             if (!cleanSomeSlots(i, sz) && sz >= threshold)
                 rehash();
         }
@@ -511,6 +530,7 @@ public class ThreadLocal<T> {
                  e = tab[i = nextIndex(i, len)]) {
                 if (e.get() == key) {
                     e.clear();
+                    //清理掉旧的槽
                     expungeStaleEntry(i);
                     return;
                 }
@@ -532,6 +552,9 @@ public class ThreadLocal<T> {
          * @param  staleSlot index of the first stale entry encountered while
          *         searching for key.
          */
+
+        //此函数首先会向后查找需要清理的槽，然后会从当前要替换的槽向前找是否存在与key值相等的槽（因为是开放寻址法）
+        //如果找到则直接替换，并进行必要的清理，否则就替换当前槽
         private void replaceStaleEntry(ThreadLocal<?> key, Object value,
                                        int staleSlot) {
             Entry[] tab = table;
@@ -543,6 +566,7 @@ public class ThreadLocal<T> {
             // incremental rehashing due to garbage collector freeing
             // up refs in bunches (i.e., whenever the collector runs).
             int slotToExpunge = staleSlot;
+            //向后遍历，寻找非空且key为null的entry
             for (int i = prevIndex(staleSlot, len);
                  (e = tab[i]) != null;
                  i = prevIndex(i, len))
@@ -551,6 +575,7 @@ public class ThreadLocal<T> {
 
             // Find either the key or trailing null slot of run, whichever
             // occurs first
+            //从下一个slot开始寻找，是否有相同的key
             for (int i = nextIndex(staleSlot, len);
                  (e = tab[i]) != null;
                  i = nextIndex(i, len)) {
@@ -561,13 +586,15 @@ public class ThreadLocal<T> {
                 // The newly stale slot, or any other stale slot
                 // encountered above it, can then be sent to expungeStaleEntry
                 // to remove or rehash all of the other entries in run.
+                //找到了对应的key，则需要与本来要替换的槽进行交换，以保证相同hash值数据存储的连续性
                 if (k == key) {
                     e.value = value;
-
+                    //交换值
                     tab[i] = tab[staleSlot];
                     tab[staleSlot] = e;
 
                     // Start expunge at preceding stale entry if it exists
+                    //如果需要清理的槽即当前槽，则从交换后的位置开始清理
                     if (slotToExpunge == staleSlot)
                         slotToExpunge = i;
                     cleanSomeSlots(expungeStaleEntry(slotToExpunge), len);
@@ -577,15 +604,19 @@ public class ThreadLocal<T> {
                 // If we didn't find stale entry on backward scan, the
                 // first stale entry seen while scanning for key is the
                 // first still present in the run.
+                //如果向后未找到需要清理的槽，则将遇到的第一个k为null的槽设置为需要清理槽的起始槽
                 if (k == null && slotToExpunge == staleSlot)
                     slotToExpunge = i;
             }
 
+            //如果没有进行槽的替换，则直接将当前槽设置为新值
             // If key not found, put new entry in stale slot
+            //help GC
             tab[staleSlot].value = null;
             tab[staleSlot] = new Entry(key, value);
 
             // If there are any other stale entries in run, expunge them
+            //存在其他需要清理的槽
             if (slotToExpunge != staleSlot)
                 cleanSomeSlots(expungeStaleEntry(slotToExpunge), len);
         }
