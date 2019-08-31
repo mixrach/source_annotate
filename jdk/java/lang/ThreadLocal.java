@@ -137,6 +137,7 @@ public class ThreadLocal<T> {
      * @throws NullPointerException if the specified supplier is null
      * @since 1.8
      */
+    //返回一个可以提供初始值的Thread local对象，初始值通过supplier来产生
     public static <S> ThreadLocal<S> withInitial(Supplier<? extends S> supplier) {
         return new SuppliedThreadLocal<>(supplier);
     }
@@ -157,9 +158,13 @@ public class ThreadLocal<T> {
      * @return the current thread's value of this thread-local
      */
     public T get() {
+        //获取当前线程
         Thread t = Thread.currentThread();
+        //获取当前线程中保存的 map
         ThreadLocalMap map = getMap(t);
+        //map不为空
         if (map != null) {
+            //如果已经存在，则直接返回
             ThreadLocalMap.Entry e = map.getEntry(this);
             if (e != null) {
                 @SuppressWarnings("unchecked")
@@ -167,6 +172,7 @@ public class ThreadLocal<T> {
                 return result;
             }
         }
+        //否则初始化
         return setInitialValue();
     }
 
@@ -177,6 +183,7 @@ public class ThreadLocal<T> {
      * @return the initial value
      */
     private T setInitialValue() {
+        //初始化
         T value = initialValue();
         Thread t = Thread.currentThread();
         ThreadLocalMap map = getMap(t);
@@ -217,6 +224,7 @@ public class ThreadLocal<T> {
      * @since 1.5
      */
      public void remove() {
+         //移除此thread local，即在map中删除
          ThreadLocalMap m = getMap(Thread.currentThread());
          if (m != null)
              m.remove(this);
@@ -305,6 +313,13 @@ public class ThreadLocal<T> {
          * entry can be expunged from table.  Such entries are referred to
          * as "stale entries" in the code that follows.
          */
+        //使用WakeReference来保存key值，Thread local对象被创建后，有两个引用指向此对象的内存
+        //一个是构造Entry传进来的强引用，一个是此处Map中的key（弱引用）。可以想象，我们栈上有一个对象引用，
+        // 堆中为此对象的实体，对象实体中有个ThreadLocal的引用，此引用为强引用。而另一方面，Thread对象中
+        // 存在一个ThreadLocalMap的引用，map中由Entry构成，entry中的key为指向ThreadLocal对象的弱引用
+        // 因此，在存有强引用的对象被回收后，强引用将被释放，TheadLocal只留存一个弱引用，此类型的引用，在GC
+        // 时会，其指向的对象会被回收。这也就避免了ThreadLocal对象的泄漏。但是，其对应的value以及Entry还存在
+        // 因此需要惰性清理
         static class Entry extends WeakReference<ThreadLocal<?>> {
             /** The value associated with this ThreadLocal. */
             Object value;
